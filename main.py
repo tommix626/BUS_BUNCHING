@@ -1,9 +1,9 @@
 # Bus bunching simulation
-# v1.0.0
+# v1.0.1 stat.01
 import pygame, sys
 import random
 
-# TODO make stops and turns into class and use .next to get the next target instead of fixed the road at first.
+# TODO (important) make stops and turns into class and use .next to get the next target instead of fixed the road at first.
 
 route = [[100, 100], [200, 100], [500, 100], [500, 300], [600, 300], [700, 300], [700, 500], [300, 500],
          [100, 500]]  # 只能水平或竖直 否则要更新距离计算的公式
@@ -22,16 +22,21 @@ bus_capacity = 40
 # statistic
 statDict = {'sucNum': 0,
             'total_waiting_time': 0,
-            'total_onbus_time': 0}
-stg=1
+            'total_onbus_time': 0,
+            'avg_waiting_time': 0,
+            'avg_onbus_time': 0}
+stg = 1
 
+
+# TODOs
 # TODO：拥堵 红绿灯 乘客（泊松）
-# action：增加延迟 或者提升通行平均速度（公交专用道）
-# 延迟还是提前 两个policy function
-# 图神经网络
-# TODO：左右对比界面 可以选择strategy n
+# TODO: action：增加延迟 或者提升通行平均速度（公交专用道）
+# TODO: 延迟还是提前 两个policy function
+# TODO: 图神经网络
+# TODO：单独界面+自动排版 可以选择strategy n
 # TODO：baseline 策略
-def save_data(f):  # 数据保存 TODO：了解数据读取储存知识 并编写matplotlib程序读取不同strategy对应文件的信息绘制折线图
+
+def save_data(f):  # 数据保存 TODO：了解数据读取储存知识 并编写matplotlib程序读取不同strategy对应文件的信息绘制折线图（more:实时更新）
     sucNum = statDict['sucNum']
     total_waiting_time = statDict['total_waiting_time']
     total_onbus_time = statDict['total_onbus_time']
@@ -48,9 +53,9 @@ def save_data(f):  # 数据保存 TODO：了解数据读取储存知识 并编�
 
 
 def sign(n):
-    if (n > 0):
+    if n > 0:
         return 1
-    elif (n == 0):
+    elif n == 0:
         return 0
     else:
         return -1
@@ -83,22 +88,28 @@ def add_passenger(wList, num=1):
         wList[t].append(CLS_psg(t, time_global))
         return
 
+def stat_calculation(i):
+    i.wait_time[1] += time_global
+    statDict['sucNum'] += 1
+    statDict['total_waiting_time'] += i.wait_time[0]
+    statDict['total_onbus_time'] += i.wait_time[1]
+    statDict['avg_waiting_time'] = statDict['total_waiting_time']//statDict['sucNum']
+    statDict['avg_onbus_time'] = statDict['total_onbus_time'] // statDict['sucNum']
 
 def stat_display():
-    sucNum = statDict['sucNum']
-    total_waiting_time = statDict['total_waiting_time']
-    total_onbus_time = statDict['total_onbus_time']
-    if sucNum == 0:
+    pos = [10, 10]
+    # prevent divide by ZERO error
+    if statDict['sucNum'] == 0:
         return
-    avg_waiting_time, avg_onbus_time = total_waiting_time / sucNum, total_onbus_time / sucNum
-    img_text_awt = fontScore.render(f"avg_waiting_time:{avg_waiting_time}", True, (0, 0, 255))
-    img_text_aot = fontScore.render(f"avg_onbus_time:{avg_onbus_time}", True, (0, 0, 255))
-    screen.blit(img_text_awt, (10, 10))
-    screen.blit(img_text_aot, (10, 30))
+    for k, v in statDict.items():
+        img_text = fontScore.render(f"{k}:{v}", True, (0, 0, 255))
+        screen.blit(img_text, pos)
+        pos[1] += 20
     return
 
 
-def tfc_update():
+
+def tfc_update():  #traffic light status update
     for key in tfc_dict:
         if tfc_dict[key] > 1:
             tfc_dict[key] -= 1
@@ -182,11 +193,8 @@ class CLS_Bus(object):
         for i in self.pList:
             if i.dest == (self.stopNum - 1) % total_turn:
                 self.cd_down += 50  # take 50 frame to go down
-                i.wait_time[1] += time_global
                 self.sucList.append(i)
-                statDict['sucNum'] += 1
-                statDict['total_waiting_time'] += i.wait_time[0]
-                statDict['total_onbus_time'] += i.wait_time[1]
+                stat_calculation(i)
                 save_data(f)
                 self.pList.remove(i)
                 return 0
@@ -252,4 +260,4 @@ while True:
     stat_display()
     pygame.display.update()
 
-    #clock.tick(500)
+    # clock.tick(500)
