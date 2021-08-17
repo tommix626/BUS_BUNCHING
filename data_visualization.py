@@ -1,5 +1,5 @@
 # data ploting
-#v1.0.0
+# v1.0.0
 import matplotlib.pyplot as plt
 
 # num waiting onbus
