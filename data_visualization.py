@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # num waiting onbus
 pNum, waitingList, onbusList = [], [], []
 
-x = eval(input("stg="))
+x = input("stg=")
 with open(f'strategy{x}', 'r') as f:
     lines = f.readlines()
     for line_num in range(len(lines)):

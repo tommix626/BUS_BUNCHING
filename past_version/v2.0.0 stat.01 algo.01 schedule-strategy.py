@@ -39,8 +39,7 @@ statDict = {'sucNum': 0,
             'total_onbus_time': 0,
             'avg_waiting_time': 0,
             'avg_onbus_time': 0}
-stg = 2
-
+stg = "schedule"
 
 # TODOs
 # TODO：拥堵 红绿灯 乘客（泊松）
