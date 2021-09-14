@@ -1,23 +1,45 @@
 # Bus bunching simulation
-# v1.0.1 stat.01
+# v2.0.1 stat.01 algo.02 headway-based
 import math
 from typing import Dict
 
+import numpy as np
 import pygame, sys
 import random
 
 # TODO (important) make stops and turns into class and use .next to get the next target instead of fixed the road at first.
+c_bar = 2
+alpha = 0.1
+beta = 1
+Headway = 1000
+# global_sigma = 0
+# stopNum = 20
+# stopTime = [0]*stopNum
 
+
+stg = 'hx'
 actionpointPosList = [[100, 100], [200, 100], [500, 100], [500, 300], [600, 300], [700, 300], [700, 500], [300, 500],
                       [100, 500]]  # 只能水平或竖直 否则要更新距离计算的公式
+actionpointLengths = [100, 300, 200, 100, 100, 200, 400, 200, 400]
+actionpointSigmas = [5, 15, 10, 5, 5, 10, 20, 10, 20]
 actionpoint_type = [0, 1, 0, 0, 1, 0, 0, 1, 0]  # 0-红绿灯 1-车站
 busStopDict_StopNum2ActionIndex = {0: 1, 1: 4, 2: 7}  # 字典key做车站号，val做route中的下标
 busStopBusesDict_ActionIndex2BusList = {1: [], 4: [], 7: []}  # 存到站车辆顺序
-tfcDurationDict_ActionIndex2DurLength = {0: 1000, 2: 1000, 3: 1000, 5: 1000, 6: 1000, 8: 1000}  # 红灯绿灯时间 (in # of frame)
-tfcStatus_dict_ActionIndex2Status = {0: random.randint(100, 1000), 2: 1, 3: random.randint(-1000, 100), 5: random.randint(100, 1000),
+busStopTimeDict_ActionIndex2LastBusArrivalTime = {1: 0, 4: 0, 7: 0}  # 存到站车辆时间
+tfcDurationDict_ActionIndex2DurLength = {0: 300, 2: 300, 3: 1000, 5: 300, 6: 300, 8: 300}  # 红灯绿灯时间 (in # of frame)
+tfcStatus_dict_ActionIndex2Status = {0: random.randint(100, 1000), 2: 1, 3: random.randint(-1000, 100),
+                                     5: random.randint(100, 1000),
                                      6: random.randint(100, 1000), 8: random.randint(100, 1000)}
 total_actionsNum = len(actionpointPosList)  # 总事件数（站+红绿灯）
 total_stopsNum = len(busStopDict_StopNum2ActionIndex)  # 总站数
+headwayList = [0] * total_actionsNum
+tsigma = 0
+for i in range(len(actionpointSigmas)):
+    tsigma += actionpointSigmas[i] ** 2
+    if actionpoint_type[i] == 0:
+        tsigma += tfcDurationDict_ActionIndex2DurLength[i] ** 2 // 4
+tsigma = math.sqrt(tsigma)
+# class stats
 car_color, road_color = [250, 100, 100], [50, 150, 50]  # 不再使用，颜色根据拥堵情况而改变
 car_width, road_width = 8, 10
 car_len = 10
@@ -27,10 +49,9 @@ statDict = {'sucNum': 0,
             'total_waiting_time': 0,
             'total_onbus_time': 0,
             'avg_waiting_time': 0,
-            'avg_onbus_time': 0}
+            'avg_onbus_time': 0,
+            'time': 0}
 
-stg = "r"+str(random.randint(100,999))
-print(stg)
 
 # TODOs
 # TODO：拥堵 红绿灯 乘客（泊松）
@@ -64,9 +85,11 @@ def sign(n):
     else:
         return -1
 
-def Calculate_distance(p1,p2):
-    r_sq2=(p1[0]-p2[0])**2 + (p2[1]-p1[1])**2
+
+def Calculate_distance(p1, p2):
+    r_sq2 = (p1[0] - p2[0]) ** 2 + (p2[1] - p1[1]) ** 2
     return int(math.sqrt(r_sq2))
+
 
 # 绘制路线图
 def draw_grid(surface):  # todo: 加入拥堵路段彩色绘图
@@ -139,7 +162,7 @@ def tfc_update():
 
 
 class CLS_Bus(object):
-    def __init__(self, initStopNum, surf, wList):
+    def __init__(self, initStopNum, surf, wList, schedule=0, status=0):
         self.actionpointIndex = initStopNum % total_actionsNum  # 将要到达的站在route里的下标
         self.pos = actionpointPosList[self.actionpointIndex]
         self.target = actionpointPosList[(initStopNum + 1) % total_actionsNum]
@@ -149,18 +172,21 @@ class CLS_Bus(object):
         self.surface = surf
         self.psgNum = 0
         self.pList = []
-        self.status = 1  # 1是行车 0是上下客 -1是等红绿灯
+        self.status = status  # 1是行车 0是上下客 -1是等红绿灯
         self.cd_down, self.cd_pick = 0, 0
         self.waitList = wList
         self.sucList = []
-        self.speed = 1  # 加入速度 方便用strategy进行控制
+        self.speed = c_bar  # 加入速度 方便用strategy进行控制
         self.segIndex, self.segLength = initStopNum % total_actionsNum, 0  # 路段编号和路段上编号
         self.facing = 1  # 顺时针1 逆时针-1
-        self.B2Bdistance=[]  #TODO:add a framework that save all the value of
+        self.B2Bdistance = []  # TODO:add a framework that save all the value of
+        self.schedule = schedule
+        # actions
+        busStopBusesDict_ActionIndex2BusList[(self.actionpointIndex - 1) % total_actionsNum].append(self)
 
     def BusMainMove(self):
         # move
-        self.probe() #探测状态并加减速
+        # self.probe() #探测状态并加减速
         self.draw()
         dx, dy = sign(self.target[0] - self.pos[0]) * max(0.1, random.random()), \
                  sign(self.target[1] - self.pos[1]) * max(0.1, random.random())  # FIXME: strategy0
@@ -173,15 +199,18 @@ class CLS_Bus(object):
                     return
             tag = self.lower_psg() * self.pick_psg()
             # print(tag, random.random())
-            if tag == 0:  # either is not done, the bus won't start
+            if tag == 0 or time_global < self.schedule:  # either is not done, the bus won't start or not start until scheduled
                 return
             self.status = 1
+            # self.get_new_speed()
+            # self.schedule_update()  # update schedule
             busStopBusesDict_ActionIndex2BusList[stop_num].remove(self)
         # 等红绿灯
         elif self.status == -1:
             dx, dy = 0, 0
             if tfcStatus_dict_ActionIndex2Status[(self.actionpointIndex - 1) % total_actionsNum] > 0:
                 self.status = 1
+                self.get_new_speed_at_tfc()
         x, y = self.pos[0] + dx * self.speed, self.pos[1] + dy * self.speed
         self.pos = [x, y]
         # when arrive at target
@@ -191,11 +220,13 @@ class CLS_Bus(object):
             if actionpoint_type[self.actionpointIndex] == 1:  # if target==bus stop
                 self.status = 0
                 busStopBusesDict_ActionIndex2BusList[self.actionpointIndex].append(self)
+                self.schedule_update(1, "headway")
+                headwayList[(self.actionpointIndex + 1) % total_actionsNum] = time_global
             elif actionpoint_type[self.actionpointIndex] == 0:  # if target==cross road
                 self.status = -1
             # update target
-            self.lastTarget=self.target
-            self.segIndex=self.actionpointIndex
+            self.lastTarget = self.target
+            self.segIndex = self.actionpointIndex
             self.actionpointIndex = (self.actionpointIndex + 1) % total_actionsNum
             self.target = actionpointPosList[self.actionpointIndex]
         return
@@ -243,12 +274,54 @@ class CLS_Bus(object):
     def probe(self):
         self.segLength = Calculate_distance(self.lastTarget, self.pos)
 
+    def get_new_speed_at_tfc(self):
+        return
+        # tg,tl=time_global,busStopTimeDict_ActionIndex2LastBusArrivalTime[self.actionpointIndex]
+        l = Calculate_distance(self.lastTarget, self.target)
+        t = np.random.normal(l / c_bar, tsigma ** 2)
+        print(l)
+        self.speed = 2  # FIXME
+        if (self.speed <= 0):
+            print("EROR")
+        # h=tg-tl
+
+    def schedule_update(self, atarrive=0, stg=""):
+        if atarrive:
+            if stg == "headway":
+                h = time_global - headwayList[(self.actionpointIndex + 1) % total_actionsNum]
+                delay = 3 * (alpha + beta) * tsigma + (alpha + beta) * (Headway - h)
+                print(delay)
+                self.schedule = time_global + delay
+                return
+
+        # schedule based
+        delay, sigma_s = 0, 0
+        action_idx = self.segIndex
+        delay += actionpointLengths[action_idx] / c_bar
+        sigma_s += actionpointSigmas[action_idx] ** 2
+        action_idx = (action_idx + 1) % total_actionsNum
+        while (1):
+            if actionpoint_type[action_idx] == 0:
+                delay += tfcDurationDict_ActionIndex2DurLength[action_idx] // 2  # IMP: delay half the time of red light
+            elif actionpoint_type[action_idx] == 1:
+                break
+            delay += actionpointLengths[action_idx] / c_bar
+            sigma_s += actionpointSigmas[action_idx]
+            action_idx = (action_idx + 1) % total_actionsNum
+        self.schedule = time_global + np.random.normal(delay, sigma_s)
+
+    def get_delay_time(self):
+        pass
+
 
 class CLS_psg(object):
     def __init__(self, start, time):
         self.start = start
-        self.dest = busStopDict_StopNum2ActionIndex[(list(busStopDict_StopNum2ActionIndex.keys())[list(busStopDict_StopNum2ActionIndex.values()).index(self.start)] + \
-                                                     random.randint(1, total_stopsNum - 1)) % total_stopsNum]  # 不能上完就下 FIXME 确认是否为站台 bosong分布确定下客目的地
+        self.dest = busStopDict_StopNum2ActionIndex[(list(busStopDict_StopNum2ActionIndex.keys())[
+                                                         list(busStopDict_StopNum2ActionIndex.values()).index(
+                                                             self.start)] + \
+                                                     random.randint(1,
+                                                                    total_stopsNum - 1)) % total_stopsNum]  # 不能上完就下 FIXME 确认是否为站台 bosong分布确定下客目的地
         self.wait_time = [-time, 0]  # record the frame of the waiting and on-bus time
         self.status = 0  # 0-(waiting for bus) 1-(on bus) 2-(reach destination)
         # print(self.start, self.dest)
@@ -258,17 +331,21 @@ class CLS_psg(object):
 pygame.init()
 screen = pygame.display.set_mode((800, 600))
 clock = pygame.time.Clock()
+# print(sys.path)
 f = open(f'../datas/strategy_{stg}', 'w')
 # 用户程序初始化
 busList = []  # todo: 再维护一个以num为键值的字典 方便计算前后距离
 waitList = [[] for i in range(total_actionsNum)]  # waitList = [[]] * total_turn 这样的话wList的子元素空list是共用一个地址的 不可取！
 time_global = 0
+cnt = 0
 for i in range(total_actionsNum):
     if actionpoint_type[i] == 1:
-        busList.append(CLS_Bus(i, screen, waitList))
+        busList.append(CLS_Bus(2, screen, waitList, schedule=Headway * cnt, status=0))
+        cnt += 1
 # 主循环
 while True:
     time_global += 1
+    statDict['time'] = time_global
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()

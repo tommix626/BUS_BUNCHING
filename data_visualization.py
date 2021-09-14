@@ -1,12 +1,13 @@
 # data ploting
-# v1.0.0
+# v1.0.1
+#TODO:变成表格模式并自动画图
 import matplotlib.pyplot as plt
 
 # num waiting onbus
 pNum, waitingList, onbusList = [], [], []
 
 x = input("stg=")
-with open(f'strategy{x}', 'r') as f:
+with open(f'strategy_{x}', 'r') as f:
     lines = f.readlines()
     for line_num in range(len(lines)):
         if line_num % 3 == 0:
